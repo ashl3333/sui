@@ -1,6 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::checkpoint_fork::CheckpointStateLoader;
 use clap::Parser;
 use move_cli::base::{
     self,
@@ -34,6 +35,12 @@ const MAX_UNIT_TEST_INSTRUCTIONS: u64 = 1_000_000;
 pub struct Test {
     #[clap(flatten)]
     pub test: test::Test,
+    /// Fork from a checkpoint at the specified sequence number
+    #[clap(long)]
+    pub fork_checkpoint: Option<u64>,
+    /// RPC endpoint URL to fetch checkpoint data from (required with --fork-checkpoint)
+    #[clap(long)]
+    pub fork_rpc_url: Option<String>,
 }
 
 impl Test {
@@ -49,6 +56,13 @@ impl Test {
                 Please build the Sui CLI from source with `--features tracing` to use this flag."
             ));
         }
+
+        if self.fork_checkpoint.is_some() && self.fork_rpc_url.is_none() {
+            return Err(anyhow::anyhow!(
+                "--fork-rpc-url is required when --fork-checkpoint is specified"
+            ));
+        }
+
         // save disassembly if trace execution is enabled
         let save_disassembly = self.test.trace;
         // find manifest file directory from a given path or (if missing) from current dir
@@ -60,6 +74,8 @@ impl Test {
             Some(unit_test_config),
             compute_coverage,
             save_disassembly,
+            self.fork_checkpoint,
+            self.fork_rpc_url,
         )
     }
 }
@@ -82,7 +98,33 @@ pub fn run_move_unit_tests(
     config: Option<UnitTestingConfig>,
     compute_coverage: bool,
     save_disassembly: bool,
+    fork_checkpoint: Option<u64>,
+    fork_rpc_url: Option<String>,
 ) -> anyhow::Result<UnitTestResult> {
+    // Load checkpoint state if fork options are provided
+    if let (Some(checkpoint_seq), Some(rpc_url)) = (fork_checkpoint, fork_rpc_url) {
+        println!(
+            "Loading checkpoint state from checkpoint {} at {}",
+            checkpoint_seq, rpc_url
+        );
+
+        let rt = tokio::runtime::Runtime::new()?;
+        let storage = rt.block_on(async {
+            CheckpointStateLoader::new(rpc_url)
+                .load_checkpoint_state(checkpoint_seq)
+                .await
+        })?;
+
+        println!(
+            "Successfully loaded {} objects from checkpoint",
+            storage.objects().len()
+        );
+
+        TEST_STORE_INNER.with(|store| {
+            *store.borrow_mut() = storage;
+        });
+    }
+
     // bind the extension hook if it has not yet been done
     Lazy::force(&SET_EXTENSION_HOOK);
 
