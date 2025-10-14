@@ -9,6 +9,8 @@ module checkpoint_fork_demo::demo_coin {
     public struct DEMO_COIN has drop {}
 
     /// Initialize the coin with a treasury cap
+    /// Note: Using deprecated coin::create_currency for simplicity in this demo
+    #[allow(deprecated_usage)]
     fun init(witness: DEMO_COIN, ctx: &mut TxContext) {
         let (treasury, metadata) = coin::create_currency(
             witness,
