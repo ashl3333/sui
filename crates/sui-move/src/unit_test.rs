@@ -90,6 +90,35 @@ static TEST_STORE: Lazy<InMemoryTestStore> = Lazy::new(|| InMemoryTestStore(&TES
 static SET_EXTENSION_HOOK: Lazy<()> =
     Lazy::new(|| set_extension_hook(Box::new(new_testing_object_and_natives_cost_runtime)));
 
+/// Helper function to load checkpoint state synchronously, handling async runtime context
+fn load_checkpoint_state_sync(
+    checkpoint_seq: u64,
+    rpc_url: String,
+) -> anyhow::Result<InMemoryStorage> {
+    // Try to use the current runtime if we're already in one
+    if let Ok(_handle) = tokio::runtime::Handle::try_current() {
+        // We're already in a runtime, so spawn a blocking task
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async {
+                CheckpointStateLoader::new(rpc_url)
+                    .load_checkpoint_state(checkpoint_seq)
+                    .await
+            })
+        })
+        .join()
+        .map_err(|e| anyhow::anyhow!("Failed to join thread: {:?}", e))?
+    } else {
+        // Not in a runtime, create a new one
+        let rt = tokio::runtime::Runtime::new()?;
+        rt.block_on(async {
+            CheckpointStateLoader::new(rpc_url)
+                .load_checkpoint_state(checkpoint_seq)
+                .await
+        })
+    }
+}
+
 /// This function returns a result of UnitTestResult. The outer result indicates whether it
 /// successfully started running the test, and the inner result indicatests whether all tests pass.
 pub fn run_move_unit_tests(
@@ -108,12 +137,7 @@ pub fn run_move_unit_tests(
             checkpoint_seq, rpc_url
         );
 
-        let rt = tokio::runtime::Runtime::new()?;
-        let storage = rt.block_on(async {
-            CheckpointStateLoader::new(rpc_url)
-                .load_checkpoint_state(checkpoint_seq)
-                .await
-        })?;
+        let storage = load_checkpoint_state_sync(checkpoint_seq, rpc_url)?;
 
         println!(
             "Successfully loaded {} objects from checkpoint",
