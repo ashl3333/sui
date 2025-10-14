@@ -12,6 +12,9 @@ use sui_types::{
 use tracing::{info, warn};
 
 const BATCH_SIZE: usize = 50;
+// Maximum number of checkpoints to scan backwards from target
+// Scanning from 0 to large checkpoint numbers (millions) is impractical
+const MAX_CHECKPOINT_SCAN_RANGE: u64 = 1000;
 
 pub struct CheckpointStateLoader {
     rpc_url: String,
@@ -66,13 +69,24 @@ impl CheckpointStateLoader {
         client: &sui_sdk::SuiClient,
         checkpoint_seq: CheckpointSequenceNumber,
     ) -> Result<Vec<Object>> {
+        // Calculate scan range: either from 0 or from (target - MAX_CHECKPOINT_SCAN_RANGE)
+        let start_seq = checkpoint_seq.saturating_sub(MAX_CHECKPOINT_SCAN_RANGE);
+        let scan_range = checkpoint_seq - start_seq + 1;
+
         info!(
-            "Fetching all objects modified up to checkpoint {}",
-            checkpoint_seq
+            "Fetching objects modified in checkpoint range {} to {} ({} checkpoints)",
+            start_seq, checkpoint_seq, scan_range
         );
 
+        if start_seq > 0 {
+            warn!(
+                "Note: Only scanning last {} checkpoints. Objects from earlier checkpoints will not be available.",
+                MAX_CHECKPOINT_SCAN_RANGE
+            );
+        }
+
         let mut all_object_ids = std::collections::HashSet::new();
-        let mut current_seq = 0u64;
+        let mut current_seq = start_seq;
 
         while current_seq <= checkpoint_seq {
             let checkpoint = match client
@@ -116,19 +130,23 @@ impl CheckpointStateLoader {
 
             current_seq += 1;
 
-            if current_seq % 100 == 0 {
+            let processed = current_seq - start_seq;
+            if processed % 100 == 0 {
                 info!(
-                    "Processed {} checkpoints, found {} unique objects",
-                    current_seq,
+                    "Processed {}/{} checkpoints, found {} unique objects",
+                    processed,
+                    scan_range,
                     all_object_ids.len()
                 );
             }
         }
 
         info!(
-            "Found {} unique objects to fetch from {} checkpoints",
+            "Found {} unique objects from {} checkpoints (range {} to {})",
             all_object_ids.len(),
-            checkpoint_seq + 1
+            scan_range,
+            start_seq,
+            checkpoint_seq
         );
 
         self.fetch_objects_by_ids(client, all_object_ids.into_iter().collect())
