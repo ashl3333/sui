@@ -42,15 +42,51 @@ MINT_OUTPUT=$("$SUI_BIN" client call \
     --function mint \
     --args "$TREASURY_ID" 1000000 \
     --gas-budget 10000000 \
-    --json)
+    --json 2>&1)
 
-# Extract the minted coin object ID
-COIN_ID=$(echo "$MINT_OUTPUT" | grep -o '"objectId":"[^"]*"' | grep -v "$TREASURY_ID" | head -1 | cut -d'"' -f4)
+# Extract the minted coin object ID and checkpoint using Python
+MINT_PARSED=$(python3 -c "
+import json
+import sys
+
+output = '''$MINT_OUTPUT'''
+
+try:
+    data = json.loads(output)
+
+    # Extract coin ID (created object that's not the treasury)
+    coin_id = None
+    if 'objectChanges' in data:
+        for change in data['objectChanges']:
+            if change.get('type') == 'created':
+                obj_id = change.get('objectId')
+                if obj_id != '$TREASURY_ID':
+                    coin_id = obj_id
+                    break
+
+    # Extract checkpoint
+    checkpoint = data.get('checkpoint', '')
+
+    if coin_id and checkpoint:
+        print(f'{coin_id}|{checkpoint}')
+    else:
+        print('ERROR|ERROR', file=sys.stderr)
+        sys.exit(1)
+except Exception as e:
+    print(f'ERROR: {e}', file=sys.stderr)
+    sys.exit(1)
+" 2>&1)
+
+if [[ "$MINT_PARSED" == ERROR* ]]; then
+    echo "Error: Failed to parse mint transaction output"
+    exit 1
+fi
+
+COIN_ID=$(echo "$MINT_PARSED" | cut -d'|' -f1)
+MINT_CHECKPOINT=$(echo "$MINT_PARSED" | cut -d'|' -f2)
+
 echo "Minted Coin ID: $COIN_ID"
-
-# Get checkpoint from the mint transaction
-CHECKPOINT=$(echo "$MINT_OUTPUT" | grep -o '"checkpoint":"[^"]*"' | cut -d'"' -f4)
-echo "Checkpoint after minting: $CHECKPOINT"
+echo "Checkpoint after minting: $MINT_CHECKPOINT"
 echo ""
 
 # Transfer the coin to USER1
@@ -59,10 +95,33 @@ TRANSFER_OUTPUT=$("$SUI_BIN" client transfer \
     --to "$USER1" \
     --object-id "$COIN_ID" \
     --gas-budget 10000000 \
-    --json)
+    --json 2>&1)
 
 # Get checkpoint from the transfer transaction
-CHECKPOINT=$(echo "$TRANSFER_OUTPUT" | grep -o '"checkpoint":"[^"]*"' | cut -d'"' -f4)
+CHECKPOINT=$(python3 -c "
+import json
+import sys
+
+output = '''$TRANSFER_OUTPUT'''
+
+try:
+    data = json.loads(output)
+    checkpoint = data.get('checkpoint', '')
+
+    if checkpoint:
+        print(checkpoint)
+    else:
+        print('ERROR', file=sys.stderr)
+        sys.exit(1)
+except Exception as e:
+    print(f'ERROR: {e}', file=sys.stderr)
+    sys.exit(1)
+" 2>&1)
+
+if [[ "$CHECKPOINT" == ERROR* ]]; then
+    echo "Error: Failed to parse transfer transaction output"
+    exit 1
+fi
 
 echo ""
 echo "=== Setup Complete ==="
