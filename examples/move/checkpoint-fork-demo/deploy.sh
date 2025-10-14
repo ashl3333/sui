@@ -47,15 +47,80 @@ echo "Building package..."
 # Publish the package
 echo ""
 echo "Publishing package to testnet..."
-PUBLISH_OUTPUT=$("$SUI_BIN" client publish --gas-budget 100000000 --json)
+PUBLISH_OUTPUT=$("$SUI_BIN" client publish --gas-budget 100000000 --json 2>/dev/null)
 
-# Extract package ID
-PACKAGE_ID=$(echo "$PUBLISH_OUTPUT" | grep -o '"packageId":"[^"]*"' | head -1 | cut -d'"' -f4)
+# Save raw output for debugging
+echo "$PUBLISH_OUTPUT" > .publish_output.json
+
+# Extract package ID and TreasuryCap using Python
+echo "Parsing transaction output..."
+PARSED=$(python3 -c "
+import json
+import sys
+
+output = '''$PUBLISH_OUTPUT'''
+
+try:
+    data = json.loads(output)
+
+    # Extract package ID
+    package_id = None
+    if 'objectChanges' in data:
+        for change in data['objectChanges']:
+            if change.get('type') == 'published':
+                package_id = change.get('packageId')
+                break
+
+    # Extract TreasuryCap ID
+    treasury_id = None
+    if 'objectChanges' in data:
+        for change in data['objectChanges']:
+            if change.get('type') == 'created':
+                obj_type = change.get('objectType', '')
+                if 'TreasuryCap' in obj_type:
+                    treasury_id = change.get('objectId')
+                    break
+
+    if package_id and treasury_id:
+        print(f'{package_id}|{treasury_id}')
+    else:
+        print('ERROR|ERROR', file=sys.stderr)
+        sys.exit(1)
+except Exception as e:
+    print(f'ERROR: {e}', file=sys.stderr)
+    sys.exit(1)
+" 2>&1)
+
+if [[ "$PARSED" == ERROR* ]]; then
+    echo "Error: Failed to parse transaction output"
+    echo "Raw output saved to .publish_output.json"
+    echo ""
+    echo "Please manually extract:"
+    echo "1. Package ID from the transaction"
+    echo "2. TreasuryCap object ID"
+    echo ""
+    echo "Then create these files:"
+    echo "  echo 'PACKAGE_ID' > .package_id"
+    echo "  echo 'TREASURY_ID' > .treasury_id"
+    exit 1
+fi
+
+PACKAGE_ID=$(echo "$PARSED" | cut -d'|' -f1)
+TREASURY_ID=$(echo "$PARSED" | cut -d'|' -f2)
+
 echo "Package ID: $PACKAGE_ID"
-
-# Extract TreasuryCap object ID
-TREASURY_ID=$(echo "$PUBLISH_OUTPUT" | grep -o '"objectId":"[^"]*"' | grep -A 1 "TreasuryCap" | tail -1 | cut -d'"' -f4)
 echo "TreasuryCap Object ID: $TREASURY_ID"
+
+# Verify we got valid IDs
+if [ -z "$PACKAGE_ID" ] || [ "$PACKAGE_ID" == "ERROR" ]; then
+    echo "Error: Failed to extract Package ID"
+    exit 1
+fi
+
+if [ -z "$TREASURY_ID" ] || [ "$TREASURY_ID" == "ERROR" ]; then
+    echo "Error: Failed to extract TreasuryCap ID"
+    exit 1
+fi
 
 # Save deployment info
 echo "$PACKAGE_ID" > .package_id
