@@ -15317,6 +15317,7 @@ name = "sui-move"
 version = "1.60.0"
 dependencies = [
  "anyhow",
+ "bcs",
  "better_any",
  "bin-version",
  "clap",
@@ -15346,6 +15347,7 @@ dependencies = [
  "sui-move-natives-latest",
  "sui-package-management",
  "sui-protocol-config",
+ "sui-sdk",
  "sui-types",
  "telemetry-subscribers",
  "tempfile",
