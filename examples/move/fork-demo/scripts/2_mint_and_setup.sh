@@ -85,6 +85,39 @@ if [ -n "$SHARED_OBJECT_IDS" ]; then
 fi
 echo ""
 
+# Extract DEMO_STATE object ID from shared objects
+DEMO_STATE_ID=$(echo "$MINT_OUTPUT" | jq -r '.objectChanges[] | select(.type == "created" and (.objectType | type == "string" and contains("DEMO_STATE"))) | .objectId')
+
+# If not found in mint output, check publish output
+if [ -z "$DEMO_STATE_ID" ] || [ "$DEMO_STATE_ID" = "null" ]; then
+    if [ -f "publish_output.json" ]; then
+        DEMO_STATE_ID=$(jq -r '.objectChanges[] | select(.type == "created" and (.objectType | type == "string" and contains("DEMO_STATE"))) | .objectId' publish_output.json)
+    fi
+fi
+
+# Call add_demo_dynamic function if we have the DEMO_STATE object
+if [ -n "$DEMO_STATE_ID" ] && [ "$DEMO_STATE_ID" != "null" ]; then
+    echo "Calling add_demo_dynamic with DEMO_STATE: $DEMO_STATE_ID"
+    ADD_DYNAMIC_OUTPUT=$($SUI_BIN client call \
+        --package "$PACKAGE_ID" \
+        --module demo_coin \
+        --function add_demo_dynamic \
+        --args "$DEMO_STATE_ID" \
+        --gas-budget 10000000 \
+        --json)
+    
+    # Save the output for debugging
+    echo "$ADD_DYNAMIC_OUTPUT" > add_dynamic_output.json
+    
+    # Extract transaction digest
+    ADD_DYNAMIC_TX=$(echo "$ADD_DYNAMIC_OUTPUT" | jq -r '.digest // .transactionBlockDigest // empty')
+    echo "add_demo_dynamic Transaction Digest: $ADD_DYNAMIC_TX"
+    echo ""
+else
+    echo "Warning: DEMO_STATE object not found, skipping add_demo_dynamic call"
+    echo ""
+fi
+
 # Save object IDs to file
 cat > "$PROJECT_DIR/object_ids.txt" <<EOF
 # Object IDs for fork testing
@@ -103,10 +136,12 @@ if [ -n "$SHARED_OBJECT_IDS" ]; then
 fi
 
 # Update config with test data
-jq --arg coinId "$COIN_OBJECT_ID" \
+CONFIG_UPDATE=$(jq --arg coinId "$COIN_OBJECT_ID" \
    --arg user1 "$USER1_ADDRESS" \
-   '. + {user1CoinId: $coinId, user1Address: $user1}' \
-   config.json > config.tmp && mv config.tmp config.json
+   --arg demoStateId "$DEMO_STATE_ID" \
+   '. + {user1CoinId: $coinId, user1Address: $user1, demoStateId: $demoStateId}' \
+   config.json)
+echo "$CONFIG_UPDATE" > config.json
 
 echo "Object IDs saved to object_ids.txt"
 echo "Configuration updated in config.json"

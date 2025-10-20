@@ -5,8 +5,11 @@
 module fork_demo::fork_tests {
     use sui::coin::{Self, Coin};
     use sui::test_scenario as ts;
-    use sui::clock::Clock;
-    use fork_demo::demo_coin::{Self, DEMO_COIN, DEMO_STATE};
+    use sui::clock::{Self, Clock};
+    use sui::dynamic_field::{Self as df};
+    use sui::dynamic_object_field::{Self as dof};
+    use fork_demo::demo_coin::{Self, DEMO_COIN, DEMO_STATE, DEMO_DYNAMIC};
+    use std::debug;
 
     const ADMIN: address = @0xAD;
     const USER1: address = @0x1111111111111111111111111111111111111111111111111111111111111111;
@@ -95,7 +98,22 @@ module fork_demo::fork_tests {
         let scenario = ts::begin(USER1);
         let s = &scenario;
         let clock = s.take_shared<Clock>();
+        assert!(clock.timestamp_ms() > 0, 4);
+        std::debug::print(&clock.timestamp_ms());
         ts::return_shared(clock);
+        ts::end(scenario);
+    }
+
+    #[test]
+    fun test_add_dynamic_field_to_demo_state() {
+        let scenario = ts::begin(USER1);
+        let s = &scenario;
+
+        let demo_state = s.take_shared<DEMO_STATE>();
+        let demo_dynamic = demo_coin::borrow_demo_dynamic(&demo_state, 0);
+        assert!(demo_coin::get_demo_dynamic_counter(demo_dynamic) == 0, 5);
+
+        ts::return_shared(demo_state);
         ts::end(scenario);
     }
 }
