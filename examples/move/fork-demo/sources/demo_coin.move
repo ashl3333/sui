@@ -5,6 +5,10 @@ module fork_demo::demo_coin {
     use sui::coin::{Self, TreasuryCap};
 
     public struct DEMO_COIN has drop {}
+    public struct DEMO_STATE has key, store {
+        id: UID,
+        counter: u64,
+    }
 
     #[allow(deprecated_usage)]
     fun init(witness: DEMO_COIN, ctx: &mut TxContext) {
@@ -19,6 +23,12 @@ module fork_demo::demo_coin {
         );
         transfer::public_freeze_object(metadata);
         transfer::public_transfer(treasury, ctx.sender());
+
+        let demo_state = DEMO_STATE {
+            id: object::new(ctx),
+            counter: 0,
+        };
+        transfer::public_share_object(demo_state);
     }
 
     public fun mint(
@@ -29,6 +39,10 @@ module fork_demo::demo_coin {
     ) {
         let coin = coin::mint(treasury, amount, ctx);
         transfer::public_transfer(coin, recipient);
+    }
+
+    public fun get_demo_counter(demo_state: &DEMO_STATE): u64 {
+        demo_state.counter
     }
 
     #[test_only]

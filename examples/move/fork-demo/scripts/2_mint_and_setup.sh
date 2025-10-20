@@ -66,8 +66,23 @@ if [ -z "$COIN_OBJECT_ID" ] || [ "$COIN_OBJECT_ID" = "null" ]; then
     exit 1
 fi
 
+# Extract all created shared objects from mint output
+SHARED_OBJECT_IDS=$(echo "$MINT_OUTPUT" | jq -r '.objectChanges[] | select(.type == "created" and (.owner | type == "object" and has("Shared"))) | .objectId' | tr '\n' ' ')
+
+# Also extract shared objects from publish output if it exists
+PUBLISH_SHARED_IDS=""
+if [ -f "publish_output.json" ]; then
+    PUBLISH_SHARED_IDS=$(jq -r '.objectChanges[] | select(.type == "created" and (.owner | type == "object" and has("Shared"))) | .objectId' publish_output.json | tr '\n' ' ')
+    if [ -n "$PUBLISH_SHARED_IDS" ]; then
+        SHARED_OBJECT_IDS="$SHARED_OBJECT_IDS $PUBLISH_SHARED_IDS"
+    fi
+fi
+
 echo "Mint successful!"
 echo "Coin Object ID: $COIN_OBJECT_ID"
+if [ -n "$SHARED_OBJECT_IDS" ]; then
+    echo "Shared Object IDs: $SHARED_OBJECT_IDS"
+fi
 echo ""
 
 # Save object IDs to file
@@ -76,6 +91,16 @@ cat > "$PROJECT_DIR/object_ids.txt" <<EOF
 # Coin owned by USER1 ($USER1_ADDRESS)
 $COIN_OBJECT_ID
 EOF
+
+# Add shared objects if any exist
+if [ -n "$SHARED_OBJECT_IDS" ]; then
+    echo "# Created shared objects" >> "$PROJECT_DIR/object_ids.txt"
+    for SHARED_ID in $SHARED_OBJECT_IDS; do
+        if [ -n "$SHARED_ID" ]; then
+            echo "$SHARED_ID" >> "$PROJECT_DIR/object_ids.txt"
+        fi
+    done
+fi
 
 # Update config with test data
 jq --arg coinId "$COIN_OBJECT_ID" \

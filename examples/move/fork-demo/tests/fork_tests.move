@@ -5,7 +5,8 @@
 module fork_demo::fork_tests {
     use sui::coin::{Self, Coin};
     use sui::test_scenario as ts;
-    use fork_demo::demo_coin::{Self, DEMO_COIN};
+    use sui::clock::Clock;
+    use fork_demo::demo_coin::{Self, DEMO_COIN, DEMO_STATE};
 
     const ADMIN: address = @0xAD;
     const USER1: address = @0x1111111111111111111111111111111111111111111111111111111111111111;
@@ -33,6 +34,14 @@ module fork_demo::fork_tests {
             let coin = ts::take_from_sender<Coin<DEMO_COIN>>(&scenario);
             assert!(coin::value(&coin) == MINT_AMOUNT, 0);
             ts::return_to_sender(&scenario, coin);
+        };
+
+        ts::next_tx(&mut scenario, USER1);
+        {
+            let demo_state = scenario.take_shared<DEMO_STATE>();
+            // Verify that the demo state counter is initialized to 0
+            assert!(demo_coin::get_demo_counter(&demo_state) == 0, 3);
+            ts::return_shared(demo_state);
         };
 
         ts::end(scenario);
@@ -67,6 +76,26 @@ module fork_demo::fork_tests {
         assert!(balance > 0, 2);
         ts::return_to_sender(&scenario, coin);
 
+        ts::end(scenario);
+    }
+
+    #[test]
+    fun test_check_demo_state_on_fork_state() {
+        let scenario = ts::begin(USER1);
+        let s = &scenario;
+        let demo_state = s.take_shared<DEMO_STATE>();
+        // Verify that the demo state counter is initialized to 0
+        assert!(demo_coin::get_demo_counter(&demo_state) == 0, 3);
+        ts::return_shared(demo_state);
+        ts::end(scenario);
+    }
+
+    #[test]
+    fun test_load_sui_system_shared_object_from_fork() {
+        let scenario = ts::begin(USER1);
+        let s = &scenario;
+        let clock = s.take_shared<Clock>();
+        ts::return_shared(clock);
         ts::end(scenario);
     }
 }
