@@ -268,13 +268,61 @@ impl Inner<'_> {
         let mut cached = true;
         if let btree_map::Entry::Vacant(e) = self.cached_objects.entry(child) {
             cached = false;
-            let obj_opt = fetch_child_object_unbounded!(
-                self,
-                parent,
-                child,
-                parents_root_version,
-                had_parent_root_version
-            );
+            // First, try to get the object from fork loaded objects
+            let fork_obj_opt = {
+                use sui_types::fork_test_support::get_fork_loaded_objects;
+                use sui_types::object::Owner;
+                
+                let fork_objects = get_fork_loaded_objects();
+                let mut found_obj: Option<Object> = None;
+                
+                for (obj_id, obj_type, owner, version, bcs_bytes) in fork_objects {
+                    if obj_id == child {
+                        if let Owner::ObjectOwner(parent_id) = owner {
+                            let parent_as_sui_addr = parent.into();
+                            if parent_id == parent_as_sui_addr {
+                                // Create the Object directly from fork data
+                                // Safety: has_public_transfer is determined by the type stored in fork data
+                                match unsafe { MoveObject::new_from_execution(
+                                    obj_type.clone(),
+                                    true,  // has_public_transfer - assume true for fork objects
+                                    version,  // Use the child's actual version from RPC!
+                                    bcs_bytes.clone(),
+                                    &self.protocol_config,
+                                    false,  // not a system mutation
+                                ) } {
+                                    Ok(move_obj) => {
+                                        let obj = Object::new_move(
+                                            move_obj,
+                                            owner,
+                                            sui_types::base_types::TransactionDigest::ZERO,
+                                        );
+                                        found_obj = Some(obj);
+                                    }
+                                    Err(_e) => {
+                                        // If creation fails, continue looking
+                                    }
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+                found_obj
+            };
+            
+            // If not found in fork storage, try regular storage
+            let obj_opt = if fork_obj_opt.is_some() {
+                fork_obj_opt
+            } else {
+                fetch_child_object_unbounded!(
+                    self,
+                    parent,
+                    child,
+                    parents_root_version,
+                    had_parent_root_version
+                )
+            };
 
             if let LimitThresholdCrossed::Hard(_, lim) = check_limit_by_meter!(
                 self.is_metered,
@@ -295,52 +343,7 @@ impl Inner<'_> {
                     ));
             };
 
-            // If object not found in storage, try to get it from fork loaded objects
-            let final_obj = if obj_opt.is_none() {
-                use sui_types::fork_test_support::get_fork_loaded_objects;
-                use sui_types::object::Owner;
-                
-                let fork_objects = get_fork_loaded_objects();
-                let mut found_obj = None;
-                
-                for (obj_id, obj_type, owner, bcs_bytes) in fork_objects {
-                    if obj_id == child {
-                        if let Owner::ObjectOwner(parent_id) = owner {
-                            let parent_as_sui_addr = parent.into();
-                            if parent_id == parent_as_sui_addr {
-                                // Create the Object directly from fork data
-                                // Safety: has_public_transfer is determined by the type stored in fork data
-                                match unsafe { MoveObject::new_from_execution(
-                                    obj_type.clone(),
-                                    true,  // has_public_transfer - assume true for fork objects
-                                    parents_root_version,  // Use parent's version for the child
-                                    bcs_bytes.clone(),
-                                    &self.protocol_config,
-                                    false,  // not a system mutation
-                                ) } {
-                                    Ok(move_obj) => {
-                                        let obj = Object::new_move(
-                                            move_obj,
-                                            owner,
-                                            sui_types::base_types::TransactionDigest::ZERO,
-                                        );
-                                        found_obj = Some(obj);
-                                    }
-                                    Err(_) => {
-                                        // If creation fails, continue looking
-                                    }
-                                }
-                                break;
-                            }
-                        }
-                    }
-                }
-                found_obj
-            } else {
-                obj_opt
-            };
-            
-            e.insert(final_obj);
+            e.insert(obj_opt);
         }
         Ok(self
             .cached_objects
